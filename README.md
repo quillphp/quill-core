@@ -1,13 +1,16 @@
-# Quill-Core
+<div align="center">
+  <h1>Quill-Core</h1>
+  <p><strong>The high-performance native engine behind the Quill PHP Framework.</strong></p>
 
-[![CI](https://github.com/quillphp/quill-core/actions/workflows/ci.yml/badge.svg)](https://github.com/quillphp/quill-core/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/quillphp/quill-core)](https://github.com/quillphp/quill-core/releases)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Rust](https://img.shields.io/badge/rust-stable-orange.svg)](https://www.rust-lang.org)
-
-**Quill-Core** is the high-performance, native engine behind the **Quill PHP Framework**. Built with Rust and optimized for sub-microsecond overhead, it offloads the heavy lifting of routing, validation, and JSON processing to a thread-safe, memory-safe library.
+  [![CI](https://github.com/quillphp/quill-core/actions/workflows/ci.yml/badge.svg)](https://github.com/quillphp/quill-core/actions/workflows/ci.yml)
+  [![Release](https://img.shields.io/github/v/release/quillphp/quill-core)](https://github.com/quillphp/quill-core/releases)
+  [![Rust](https://img.shields.io/badge/rust-stable-orange.svg)](https://www.rust-lang.org)
+  [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+</div>
 
 ---
+
+**Quill-Core** is the specialized native library that offloads heavy lifting from PHP userland to a thread-safe, memory-safe Rust engine. Built for sub-microsecond overhead, it powers the routing, validation, and JSON processing of the Quill PHP Framework.
 
 ## Key Features
 

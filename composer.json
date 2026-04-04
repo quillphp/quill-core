@@ -1,0 +1,20 @@
+{
+    "name": "quillphp/quill-core",
+    "version": "0.0.1",
+    "description": "High-performance binary engine for the Quill PHP Framework",
+    "type": "library",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Quill Authors"
+        }
+    ],
+    "require": {
+        "php": "^8.3"
+    },
+    "autoload": {
+        "files": [
+            "quill.h"
+        ]
+    }
+}

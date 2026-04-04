@@ -11,10 +11,5 @@
     ],
     "require": {
         "php": "^8.3"
-    },
-    "autoload": {
-        "files": [
-            "quill.h"
-        ]
     }
 }

@@ -1,0 +1,18 @@
+# Rust Build Artifacts
+/target/
+
+# Custom Build Artifacts (from scripts/build.sh)
+/bin/
+
+# Platform-specific shared libraries
+*.so
+*.dylib
+*.dll
+
+# IDE/OS Debris
+.DS_Store
+.idea/
+.vscode/
+
+# Cargo lockfile (unneeded for standalone library)
+Cargo.lock

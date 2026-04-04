@@ -1,7 +1,7 @@
-use std::collections::HashMap;
+use regex::Regex;
 use serde::Deserialize;
 use serde_json::Value;
-use regex::Regex;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "type")]
@@ -45,7 +45,7 @@ impl ValidatorRegistry {
 
     pub fn register(&mut self, name: String, schema_json: &str) -> Result<(), String> {
         let schema: DtoSchema = serde_json::from_str(schema_json).map_err(|e| e.to_string())?;
-        
+
         // Pre-compile regexes
         for field in schema.fields.values() {
             for rule in &field.rules {
@@ -57,15 +57,22 @@ impl ValidatorRegistry {
                 }
             }
         }
-        
+
         self.schemas.insert(name, schema);
         Ok(())
     }
 
-    pub fn validate(&self, dto_name: &str, input_json: &str) -> Result<Value, HashMap<String, Vec<String>>> {
+    pub fn validate(
+        &self,
+        dto_name: &str,
+        input_json: &str,
+    ) -> Result<Value, HashMap<String, Vec<String>>> {
         let schema = self.schemas.get(dto_name).ok_or_else(|| {
             let mut err = HashMap::new();
-            err.insert("system".to_string(), vec![format!("DTO '{}' not registered", dto_name)]);
+            err.insert(
+                "system".to_string(),
+                vec![format!("DTO '{}' not registered", dto_name)],
+            );
             err
         })?;
 
@@ -90,7 +97,10 @@ impl ValidatorRegistry {
             match value {
                 Some(Value::Null) | None => {
                     if !field.is_nullable && !field.has_default {
-                        errors.entry(name.clone()).or_insert_with(Vec::new).push(format!("Field '{}' is required.", name));
+                        errors
+                            .entry(name.clone())
+                            .or_insert_with(Vec::new)
+                            .push(format!("Field '{}' is required.", name));
                     } else {
                         validated_data.insert(name.clone(), Value::Null);
                     }
@@ -122,12 +132,18 @@ impl ValidatorRegistry {
     fn check_rule(&self, field: &str, value: &Value, rule: &ValidationRule) -> Result<(), String> {
         match rule {
             ValidationRule::Required => {
-                if value.is_null() { return Err(format!("Field '{}' is required.", field)); }
+                if value.is_null() {
+                    return Err(format!("Field '{}' is required.", field));
+                }
             }
             ValidationRule::Email => {
                 if let Some(s) = value.as_str() {
-                    if !s.contains('@') { // Simple check for now, can use a regex
-                        return Err(format!("The field '{}' must be a valid email address.", field));
+                    if !s.contains('@') {
+                        // Simple check for now, can use a regex
+                        return Err(format!(
+                            "The field '{}' must be a valid email address.",
+                            field
+                        ));
                     }
                 }
             }
@@ -140,20 +156,29 @@ impl ValidatorRegistry {
             ValidationRule::Max { val } => {
                 let num = value.as_f64().unwrap_or(0.0);
                 if num > *val {
-                    return Err(format!("The field '{}' may not be greater than {}.", field, val));
+                    return Err(format!(
+                        "The field '{}' may not be greater than {}.",
+                        field, val
+                    ));
                 }
             }
             ValidationRule::MinLength { len } => {
                 if let Some(s) = value.as_str() {
                     if s.len() < *len {
-                        return Err(format!("The field '{}' must be at least {} characters.", field, len));
+                        return Err(format!(
+                            "The field '{}' must be at least {} characters.",
+                            field, len
+                        ));
                     }
                 }
             }
             ValidationRule::MaxLength { len } => {
                 if let Some(s) = value.as_str() {
                     if s.len() > *len {
-                        return Err(format!("The field '{}' may not be greater than {} characters.", field, len));
+                        return Err(format!(
+                            "The field '{}' may not be greater than {} characters.",
+                            field, len
+                        ));
                     }
                 }
             }

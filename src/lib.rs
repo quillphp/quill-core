@@ -1,3 +1,4 @@
+#![allow(clippy::missing_safety_doc)]
 mod json;
 mod manifest;
 mod router;
@@ -169,14 +170,11 @@ pub extern "C" fn quill_router_build(
         ptr::null_mut()
     });
 
-    match result {
-        Ok(ptr) => ptr,
-        Err(_) => ptr::null_mut(),
-    }
+    result.unwrap_or(ptr::null_mut())
 }
 
 #[no_mangle]
-pub extern "C" fn quill_router_match(
+pub unsafe extern "C" fn quill_router_match(
     router_ptr: *mut std::ffi::c_void,
     method: *const c_char,
     method_len: usize,
@@ -252,10 +250,7 @@ pub extern "C" fn quill_router_match(
         }
     });
 
-    match result {
-        Ok(code) => code,
-        Err(_) => 1,
-    }
+    result.unwrap_or(1)
 }
 
 #[no_mangle]
@@ -269,7 +264,7 @@ pub extern "C" fn quill_router_free(router_ptr: *mut std::ffi::c_void) {
 }
 
 #[no_mangle]
-pub extern "C" fn quill_json_compact(
+pub unsafe extern "C" fn quill_json_compact(
     input: *const c_char,
     input_len: usize,
     out_buf: *mut c_char,
@@ -303,10 +298,7 @@ pub extern "C" fn quill_json_compact(
         0
     });
 
-    match result {
-        Ok(len) => len,
-        Err(_) => 0,
-    }
+    result.unwrap_or_default()
 }
 
 #[no_mangle]
@@ -316,7 +308,7 @@ pub extern "C" fn quill_validator_new() -> *mut std::ffi::c_void {
 }
 
 #[no_mangle]
-pub extern "C" fn quill_validator_register(
+pub unsafe extern "C" fn quill_validator_register(
     registry_ptr: *mut std::ffi::c_void,
     name: *const c_char,
     name_len: usize,
@@ -349,14 +341,11 @@ pub extern "C" fn quill_validator_register(
         }
     });
 
-    match result {
-        Ok(code) => code,
-        Err(_) => 1,
-    }
+    result.unwrap_or(1)
 }
 
 #[no_mangle]
-pub extern "C" fn quill_validator_validate(
+pub unsafe extern "C" fn quill_validator_validate(
     registry_ptr: *mut std::ffi::c_void,
     dto_name: *const c_char,
     dto_name_len: usize,
@@ -411,14 +400,11 @@ pub extern "C" fn quill_validator_validate(
         }
     });
 
-    match result {
-        Ok(code) => code,
-        Err(_) => 2,
-    }
+    result.unwrap_or(2)
 }
 
 #[no_mangle]
-pub extern "C" fn quill_router_dispatch(
+pub unsafe extern "C" fn quill_router_dispatch(
     router_ptr: *mut std::ffi::c_void,
     validator_ptr: *mut std::ffi::c_void,
     method: *const c_char,
@@ -520,10 +506,7 @@ pub extern "C" fn quill_router_dispatch(
         0
     });
 
-    match result {
-        Ok(code) => code,
-        Err(_) => 2,
-    }
+    result.unwrap_or(2)
 }
 
 #[no_mangle]
@@ -535,7 +518,7 @@ pub extern "C" fn quill_validator_free(registry_ptr: *mut std::ffi::c_void) {
     }
 }
 #[no_mangle]
-pub extern "C" fn quill_server_start(
+pub unsafe extern "C" fn quill_server_start(
     router_ptr: *mut std::ffi::c_void,
     validator_ptr: *mut std::ffi::c_void,
     port: u16,
@@ -570,8 +553,5 @@ pub extern "C" fn quill_server_start(
         0
     });
 
-    match result {
-        Ok(code) => code,
-        Err(_) => 1,
-    }
+    result.unwrap_or(1)
 }

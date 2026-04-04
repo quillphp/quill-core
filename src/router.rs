@@ -21,7 +21,7 @@ impl QuillRouter {
         for entry in entries {
             let router = routers
                 .entry(entry.method.clone())
-                .or_insert_with(Router::new);
+                .or_default();
             let metadata = RouteMetadata {
                 handler_id: entry.handler_id,
                 dto_class: entry.dto_class,
@@ -45,10 +45,8 @@ impl QuillRouter {
 
         // If not found, check if path exists in other methods for 405
         for (m, router) in &self.routers {
-            if m != method {
-                if router.at(path).is_ok() {
-                    return Err(2);
-                }
+            if m != method && router.at(path).is_ok() {
+                return Err(2);
             }
         }
 

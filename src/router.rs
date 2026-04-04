@@ -19,9 +19,7 @@ impl QuillRouter {
         let mut routers: HashMap<String, Router<RouteMetadata>> = HashMap::new();
 
         for entry in entries {
-            let router = routers
-                .entry(entry.method.clone())
-                .or_default();
+            let router = routers.entry(entry.method.clone()).or_default();
             let metadata = RouteMetadata {
                 handler_id: entry.handler_id,
                 dto_class: entry.dto_class,

@@ -1,4 +1,4 @@
-# 🏹 Quill-Core
+# Quill-Core
 
 [![CI](https://github.com/quillphp/quill-core/actions/workflows/ci.yml/badge.svg)](https://github.com/quillphp/quill-core/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/quillphp/quill-core)](https://github.com/quillphp/quill-core/releases)
@@ -9,7 +9,7 @@
 
 ---
 
-## 🚀 Key Features
+## Key Features
 
 - **Blazing Fast Routing**: Uses a Radix-tree based router (`matchit`) for O(1) performance in both PHP and CLI modes.
 - **Native DTO Validation**: Decouples validation from PHP userland, performing schema checks at native speeds before your code even runs.
@@ -19,7 +19,7 @@
 
 ---
 
-## 🏗️ Architecture Overview
+## Architecture Overview
 
 The Quill Core acts as a high-performance intermediary between the incoming HTTP traffic and your PHP application logic:
 
@@ -35,7 +35,7 @@ graph LR
 
 ---
 
-## 🛠️ Installation
+## Installation
 
 ### Option 1: Using Pre-built Binaries (Recommended)
 You can download the optimized shared libraries (`.so` or `.dylib`) and the required C-header (`quill.h`) directly from the [GitHub Releases](https://github.com/quillphp/quill-core/releases) page.
@@ -54,7 +54,7 @@ cd quill-core
 
 ---
 
-## 🔧 Integration with Quill PHP
+## Integration with Quill PHP
 
 By default, the Quill PHP framework will automatically discover the core library if it's placed in any of these locations:
 1.  `build/libquill.so` (Local Development)
@@ -69,7 +69,7 @@ export QUILL_CORE_BINARY=/path/to/your/libquill.so
 
 ---
 
-## 🧪 Development & Testing
+## Development & Testing
 
 We maintain strict code quality standards to ensure consistency and performance.
 
@@ -86,6 +86,6 @@ cargo fmt --all
 
 ---
 
-## 📜 License
+## License
 
 This project is open-sourced under the **MIT License**.

@@ -48,3 +48,11 @@ else
     echo "❌ Error: Built library not found at ${SOURCE_LIB}"
     exit 1
 fi
+
+# -- Sync to quill vendor directory ------------------------------------------
+QUILL_VENDOR="${PROJECT_ROOT}/../quill/vendor/quillphp/quill-core/bin"
+if [ -d "${QUILL_VENDOR}" ]; then
+    cp "${TARGET_LIB}" "${QUILL_VENDOR}/$(basename "${TARGET_LIB}")"
+    cp "${BIN_DIR}/quill.h" "${QUILL_VENDOR}/quill.h"
+    echo "📦 Synced to ${QUILL_VENDOR}/"
+fi

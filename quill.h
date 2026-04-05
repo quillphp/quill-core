@@ -1,7 +1,5 @@
 #ifndef QUILL_H
 #define QUILL_H
-#include <stdint.h>
-#include <stddef.h>
 
 void*  quill_router_build(const char* manifest_json, size_t manifest_len);
 int    quill_router_match(void* router, const char* method, size_t method_len,
@@ -22,6 +20,9 @@ int    quill_validator_register(void* registry, const char* name, size_t name_le
 int    quill_validator_validate(void* registry, const char* dto_name, size_t dto_name_len, const char* input_json, size_t input_len, char* out_json, size_t out_max);
 void   quill_validator_free(void* registry);
 
-typedef int (*quill_php_callback)(uint32_t handler_id, const char* params_json, const char* dto_data_json, char* out_response, size_t out_max);
-int quill_server_start(void* router_ptr, void* validator_ptr, uint16_t port, quill_php_callback callback);
+int quill_server_listen(void* router, void* validator, uint16_t port);
+int quill_server_prebind(uint16_t port);
+int quill_server_poll(void* out_id, void* out_handler_id, char* out_params_json, size_t out_params_max, char* out_dto_json, size_t out_dto_max);
+int quill_server_respond(uint32_t id, const char* response_json, size_t response_len);
+
 #endif

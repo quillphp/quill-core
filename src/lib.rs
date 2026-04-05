@@ -5,6 +5,7 @@ mod router;
 mod validator;
 
 use dashmap::DashMap;
+use once_cell::sync::Lazy;
 use router::QuillRouter;
 use std::collections::HashMap;
 use std::ffi::c_char;
@@ -13,9 +14,8 @@ use std::ptr;
 use std::slice;
 use std::sync::atomic::{AtomicI32, AtomicU32};
 use std::sync::{Arc, Mutex};
-use validator::ValidatorRegistry;
 use tokio::sync::{mpsc, oneshot};
-use once_cell::sync::Lazy;
+use validator::ValidatorRegistry;
 
 static REQUEST_ID: AtomicU32 = AtomicU32::new(1);
 static SHARED_SOCKET_FD: AtomicI32 = AtomicI32::new(-1);
@@ -23,20 +23,20 @@ static SHARED_SOCKET_FD: AtomicI32 = AtomicI32::new(-1);
 mod ax_rt {
     use super::{QuillRouter, ValidatorRegistry};
     use axum::http::StatusCode;
-    use std::collections::HashMap;
     use axum::{
         extract::{Request, State},
         response::{IntoResponse, Response},
         routing::any,
         Router as AxumRouter,
     };
+    use socket2::{Domain, Protocol, Socket, Type};
+    use sonic_rs::{JsonContainerTrait, JsonValueTrait};
+    use std::collections::HashMap;
+    #[cfg(unix)]
+    use std::os::unix::io::FromRawFd;
     use std::sync::Arc;
     use tokio::net::TcpListener;
     use tokio::sync::{mpsc, oneshot};
-    use socket2::{Domain, Protocol, Socket, Type};
-    use sonic_rs::{JsonContainerTrait, JsonValueTrait};
-    #[cfg(unix)]
-    use std::os::unix::io::FromRawFd;
 
     pub struct PendingRequest {
         pub id: u32,
@@ -63,14 +63,12 @@ mod ax_rt {
     fn make_listener(port: u16) -> Result<TcpListener, Box<dyn std::error::Error>> {
         #[cfg(unix)]
         {
-            let shared = super::SHARED_SOCKET_FD
-                .load(std::sync::atomic::Ordering::Relaxed);
+            let shared = super::SHARED_SOCKET_FD.load(std::sync::atomic::Ordering::Relaxed);
             if shared >= 0 {
                 let dup_fd = unsafe { libc::dup(shared) };
                 if dup_fd >= 0 {
                     // Safety: dup_fd is a valid, nonblocking, listening socket fd.
-                    let std_listener =
-                        unsafe { std::net::TcpListener::from_raw_fd(dup_fd) };
+                    let std_listener = unsafe { std::net::TcpListener::from_raw_fd(dup_fd) };
                     return Ok(TcpListener::from_std(std_listener)?);
                 }
             }
@@ -118,10 +116,13 @@ mod ax_rt {
                     for (k, v) in matched.params.iter() {
                         params_map.insert(k.to_string(), v.to_string());
                     }
-                    params_json = sonic_rs::to_string(&params_map).unwrap_or_else(|_| "{}".to_string());
+                    params_json =
+                        sonic_rs::to_string(&params_map).unwrap_or_else(|_| "{}".to_string());
                 }
 
-                let body_bytes = axum::body::to_bytes(req.into_body(), 10 * 1024 * 1024).await.unwrap_or_default();
+                let body_bytes = axum::body::to_bytes(req.into_body(), 10 * 1024 * 1024)
+                    .await
+                    .unwrap_or_default();
                 let body_str = std::str::from_utf8(&body_bytes).unwrap_or("");
 
                 let mut dto_data_json = "null".to_string();
@@ -129,10 +130,12 @@ mod ax_rt {
                     if let Some(v_reg) = &state.validator {
                         match v_reg.validate(dto_name, body_str) {
                             Ok(data) => {
-                                dto_data_json = sonic_rs::to_string(&data).unwrap_or_else(|_| "null".to_string());
+                                dto_data_json = sonic_rs::to_string(&data)
+                                    .unwrap_or_else(|_| "null".to_string());
                             }
                             Err(errors) => {
-                                let err_json = sonic_rs::to_string(&errors).unwrap_or_else(|_| "{}".to_string());
+                                let err_json = sonic_rs::to_string(&errors)
+                                    .unwrap_or_else(|_| "{}".to_string());
                                 return (StatusCode::BAD_REQUEST, err_json).into_response();
                             }
                         }
@@ -140,7 +143,8 @@ mod ax_rt {
                 }
 
                 let (tx, rx) = oneshot::channel();
-                let request_id = super::REQUEST_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let request_id =
+                    super::REQUEST_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
                 let pending = PendingRequest {
                     id: request_id,
@@ -156,20 +160,18 @@ mod ax_rt {
 
                 let res_json = rx.await.unwrap_or_else(|_| "{}".to_string());
 
-                let php_res: sonic_rs::Value = sonic_rs::from_str(&res_json)
-                    .unwrap_or_else(|_| sonic_rs::json!({}));
+                let php_res: sonic_rs::Value =
+                    sonic_rs::from_str(&res_json).unwrap_or_else(|_| sonic_rs::json!({}));
                 let status = php_res["status"].as_u64().unwrap_or(200) as u16;
                 let body = php_res["body"].as_str().unwrap_or("").to_string();
 
-                let mut response = (
-                    StatusCode::from_u16(status).unwrap_or(StatusCode::OK),
-                    body,
-                ).into_response();
+                let mut response =
+                    (StatusCode::from_u16(status).unwrap_or(StatusCode::OK), body).into_response();
 
                 if let Some(headers) = php_res["headers"].as_object() {
                     let h_map = response.headers_mut();
                     for (k, v) in headers {
-                        let k: &str = k.as_ref();
+                        let k: &str = k;
                         let v_str = v.as_str().unwrap_or("");
                         if let (Ok(h_name), Ok(h_val)) = (
                             axum::http::HeaderName::from_bytes(k.as_bytes()),
@@ -189,8 +191,7 @@ mod ax_rt {
     }
 }
 
-static PENDING_RESPONSES: Lazy<DashMap<u32, oneshot::Sender<String>>> =
-    Lazy::new(DashMap::new);
+static PENDING_RESPONSES: Lazy<DashMap<u32, oneshot::Sender<String>>> = Lazy::new(DashMap::new);
 
 static POLL_RECEIVER: Lazy<Mutex<Option<mpsc::Receiver<ax_rt::PendingRequest>>>> =
     Lazy::new(|| Mutex::new(None));
@@ -200,7 +201,9 @@ pub extern "C" fn quill_router_build(
     manifest_json: *const c_char,
     manifest_len: usize,
 ) -> *mut std::ffi::c_void {
-    if manifest_json.is_null() { return ptr::null_mut(); }
+    if manifest_json.is_null() {
+        return ptr::null_mut();
+    }
     catch_unwind(|| {
         let slice = unsafe { slice::from_raw_parts(manifest_json as *const u8, manifest_len) };
         if let Ok(json_str) = std::str::from_utf8(slice) {
@@ -209,7 +212,8 @@ pub extern "C" fn quill_router_build(
             }
         }
         ptr::null_mut()
-    }).unwrap_or(ptr::null_mut())
+    })
+    .unwrap_or(ptr::null_mut())
 }
 
 #[no_mangle]
@@ -224,19 +228,33 @@ pub unsafe extern "C" fn quill_router_match(
     out_params_json: *mut c_char,
     out_params_max: usize,
 ) -> std::ffi::c_int {
-    if router_ptr.is_null() || method.is_null() || path.is_null() { return 1; }
+    if router_ptr.is_null() || method.is_null() || path.is_null() {
+        return 1;
+    }
     let router = unsafe { Arc::from_raw(router_ptr as *const QuillRouter) };
-    let method_str = std::str::from_utf8(unsafe { slice::from_raw_parts(method as *const u8, method_len) }).unwrap_or("");
-    let path_str = std::str::from_utf8(unsafe { slice::from_raw_parts(path as *const u8, path_len) }).unwrap_or("");
+    let method_str =
+        std::str::from_utf8(unsafe { slice::from_raw_parts(method as *const u8, method_len) })
+            .unwrap_or("");
+    let path_str =
+        std::str::from_utf8(unsafe { slice::from_raw_parts(path as *const u8, path_len) })
+            .unwrap_or("");
 
     let res = match router.match_route(method_str, path_str) {
         Ok(matched) => {
-            unsafe { *out_handler_id = matched.value.handler_id; *out_num_params = matched.params.len() as u32; }
+            unsafe {
+                *out_handler_id = matched.value.handler_id;
+                *out_num_params = matched.params.len() as u32;
+            }
             let mut params_map = HashMap::with_capacity(matched.params.len());
-            for (k, v) in matched.params.iter() { params_map.insert(k.to_string(), v.to_string()); }
+            for (k, v) in matched.params.iter() {
+                params_map.insert(k.to_string(), v.to_string());
+            }
             let json = sonic_rs::to_string(&params_map).unwrap_or_default();
             let len = json.len().min(out_params_max - 1);
-            unsafe { ptr::copy_nonoverlapping(json.as_ptr(), out_params_json as *mut u8, len); *out_params_json.add(len) = 0; }
+            unsafe {
+                ptr::copy_nonoverlapping(json.as_ptr(), out_params_json as *mut u8, len);
+                *out_params_json.add(len) = 0;
+            }
             0
         }
         Err(e) => e,
@@ -259,10 +277,14 @@ pub unsafe extern "C" fn quill_server_listen(
     validator_ptr: *mut std::ffi::c_void,
     port: u16,
 ) -> i32 {
-    if router_ptr.is_null() { return 1; }
+    if router_ptr.is_null() {
+        return 1;
+    }
 
     let router = unsafe { Arc::from_raw(router_ptr as *const QuillRouter) };
-    let validator = if validator_ptr.is_null() { None } else {
+    let validator = if validator_ptr.is_null() {
+        None
+    } else {
         Some(unsafe { Arc::from_raw(validator_ptr as *const ValidatorRegistry) })
     };
 
@@ -274,7 +296,7 @@ pub unsafe extern "C" fn quill_server_listen(
 
     let state = Arc::new(ax_rt::ServerState {
         router: Arc::clone(&router),
-        validator: validator.as_ref().map(|v| Arc::clone(v)),
+        validator: validator.as_ref().map(Arc::clone),
         request_tx: tx,
     });
 
@@ -311,15 +333,24 @@ pub unsafe extern "C" fn quill_server_poll(
         if let Ok(req) = rx.try_recv() {
             let out_id = out_id as *mut u32;
             let out_handler_id = out_handler_id as *mut u32;
-            unsafe { *out_id = req.id; *out_handler_id = req.handler_id; }
+            unsafe {
+                *out_id = req.id;
+                *out_handler_id = req.handler_id;
+            }
 
             let p_bytes = req.params_json.as_bytes();
             let p_len = p_bytes.len().min(out_params_max - 1);
-            unsafe { ptr::copy_nonoverlapping(p_bytes.as_ptr(), out_params_json as *mut u8, p_len); *out_params_json.add(p_len) = 0; }
+            unsafe {
+                ptr::copy_nonoverlapping(p_bytes.as_ptr(), out_params_json as *mut u8, p_len);
+                *out_params_json.add(p_len) = 0;
+            }
 
             let d_bytes = req.dto_data_json.as_bytes();
             let d_len = d_bytes.len().min(out_dto_max - 1);
-            unsafe { ptr::copy_nonoverlapping(d_bytes.as_ptr(), out_dto_json as *mut u8, d_len); *out_dto_json.add(d_len) = 0; }
+            unsafe {
+                ptr::copy_nonoverlapping(d_bytes.as_ptr(), out_dto_json as *mut u8, d_len);
+                *out_dto_json.add(d_len) = 0;
+            }
 
             PENDING_RESPONSES.insert(req.id, req.response_tx);
             return 1;
@@ -329,7 +360,11 @@ pub unsafe extern "C" fn quill_server_poll(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn quill_server_respond(id: u32, response_json: *const c_char, response_len: usize) -> i32 {
+pub unsafe extern "C" fn quill_server_respond(
+    id: u32,
+    response_json: *const c_char,
+    response_len: usize,
+) -> i32 {
     if let Some((_, tx)) = PENDING_RESPONSES.remove(&id) {
         let slice = unsafe { slice::from_raw_parts(response_json as *const u8, response_len) };
         let response = std::str::from_utf8(slice).unwrap_or("{}").to_string();
@@ -352,13 +387,21 @@ pub unsafe extern "C" fn quill_validator_register(
     schema_json: *const c_char,
     schema_len: usize,
 ) -> std::ffi::c_int {
-    if registry_ptr.is_null() { return 1; }
+    if registry_ptr.is_null() {
+        return 1;
+    }
     let registry = unsafe { Arc::from_raw(registry_ptr as *mut ValidatorRegistry) };
-    let name = std::str::from_utf8(unsafe { slice::from_raw_parts(name as *const u8, name_len) }).unwrap_or("");
-    let schema = std::str::from_utf8(unsafe { slice::from_raw_parts(schema_json as *const u8, schema_len) }).unwrap_or("");
+    let name = std::str::from_utf8(unsafe { slice::from_raw_parts(name as *const u8, name_len) })
+        .unwrap_or("");
+    let schema =
+        std::str::from_utf8(unsafe { slice::from_raw_parts(schema_json as *const u8, schema_len) })
+            .unwrap_or("");
 
     let ptr = Arc::as_ptr(&registry) as *mut ValidatorRegistry;
-    let res = match unsafe { (*ptr).register(name.to_string(), schema) } { Ok(_) => 0, Err(_) => 1 };
+    let res = match unsafe { (*ptr).register(name.to_string(), schema) } {
+        Ok(_) => 0,
+        Err(_) => 1,
+    };
 
     let _ = Arc::into_raw(registry);
     res
@@ -374,22 +417,34 @@ pub unsafe extern "C" fn quill_validator_validate(
     out_json: *mut c_char,
     out_max: usize,
 ) -> std::ffi::c_int {
-    if registry_ptr.is_null() { return 2; }
+    if registry_ptr.is_null() {
+        return 2;
+    }
     let registry = unsafe { Arc::from_raw(registry_ptr as *const ValidatorRegistry) };
-    let name = std::str::from_utf8(unsafe { slice::from_raw_parts(dto_name as *const u8, dto_name_len) }).unwrap_or("");
-    let input = std::str::from_utf8(unsafe { slice::from_raw_parts(input_json as *const u8, input_len) }).unwrap_or("");
+    let name =
+        std::str::from_utf8(unsafe { slice::from_raw_parts(dto_name as *const u8, dto_name_len) })
+            .unwrap_or("");
+    let input =
+        std::str::from_utf8(unsafe { slice::from_raw_parts(input_json as *const u8, input_len) })
+            .unwrap_or("");
 
     let res = match registry.validate(name, input) {
         Ok(val) => {
             let json = sonic_rs::to_string(&val).unwrap_or_default();
             let len = json.len().min(out_max - 1);
-            unsafe { ptr::copy_nonoverlapping(json.as_ptr(), out_json as *mut u8, len); *out_json.add(len) = 0; }
+            unsafe {
+                ptr::copy_nonoverlapping(json.as_ptr(), out_json as *mut u8, len);
+                *out_json.add(len) = 0;
+            }
             0
         }
         Err(errors) => {
             let json = sonic_rs::to_string(&errors).unwrap_or_default();
             let len = json.len().min(out_max - 1);
-            unsafe { ptr::copy_nonoverlapping(json.as_ptr(), out_json as *mut u8, len); *out_json.add(len) = 0; }
+            unsafe {
+                ptr::copy_nonoverlapping(json.as_ptr(), out_json as *mut u8, len);
+                *out_json.add(len) = 0;
+            }
             1
         }
     };
@@ -411,41 +466,79 @@ pub unsafe extern "C" fn quill_router_dispatch(
     out_json: *mut c_char,
     out_max: usize,
 ) -> std::ffi::c_int {
-    if router_ptr.is_null() { return 2; }
+    if router_ptr.is_null() {
+        return 2;
+    }
     let router = unsafe { Arc::from_raw(router_ptr as *const QuillRouter) };
-    let validator = if validator_ptr.is_null() { None } else { Some(unsafe { Arc::from_raw(validator_ptr as *const ValidatorRegistry) }) };
+    let validator = if validator_ptr.is_null() {
+        None
+    } else {
+        Some(unsafe { Arc::from_raw(validator_ptr as *const ValidatorRegistry) })
+    };
 
-    let method_str = std::str::from_utf8(unsafe { slice::from_raw_parts(method as *const u8, method_len) }).unwrap_or("");
-    let path_str = std::str::from_utf8(unsafe { slice::from_raw_parts(path as *const u8, path_len) }).unwrap_or("");
+    let method_str =
+        std::str::from_utf8(unsafe { slice::from_raw_parts(method as *const u8, method_len) })
+            .unwrap_or("");
+    let path_str =
+        std::str::from_utf8(unsafe { slice::from_raw_parts(path as *const u8, path_len) })
+            .unwrap_or("");
     let mut response = serde_json::Map::new();
 
     match router.match_route(method_str, path_str) {
         Ok(matched) => {
             response.insert("status".to_string(), serde_json::json!(1));
-            response.insert("handler_id".to_string(), serde_json::json!(matched.value.handler_id));
+            response.insert(
+                "handler_id".to_string(),
+                serde_json::json!(matched.value.handler_id),
+            );
             let mut params = serde_json::Map::new();
-            for (k, v) in matched.params.iter() { params.insert(k.to_string(), serde_json::json!(v)); }
+            for (k, v) in matched.params.iter() {
+                params.insert(k.to_string(), serde_json::json!(v));
+            }
             response.insert("params".to_string(), serde_json::Value::Object(params));
 
             if let Some(dto_name) = &matched.value.dto_class {
                 if let Some(v_reg) = &validator {
-                    let body_str = if !body_json.is_null() && body_len > 0 { std::str::from_utf8(unsafe { slice::from_raw_parts(body_json as *const u8, body_len) }).unwrap_or("") } else { "" };
+                    let body_str = if !body_json.is_null() && body_len > 0 {
+                        std::str::from_utf8(unsafe {
+                            slice::from_raw_parts(body_json as *const u8, body_len)
+                        })
+                        .unwrap_or("")
+                    } else {
+                        ""
+                    };
                     match v_reg.validate(dto_name, body_str) {
-                        Ok(data) => { response.insert("dto_valid".to_string(), serde_json::json!(true)); response.insert("dto_data".to_string(), data); }
-                        Err(errors) => { response.insert("dto_valid".to_string(), serde_json::json!(false)); response.insert("dto_errors".to_string(), serde_json::json!(errors)); }
+                        Ok(data) => {
+                            response.insert("dto_valid".to_string(), serde_json::json!(true));
+                            response.insert("dto_data".to_string(), data);
+                        }
+                        Err(errors) => {
+                            response.insert("dto_valid".to_string(), serde_json::json!(false));
+                            response.insert("dto_errors".to_string(), serde_json::json!(errors));
+                        }
                     }
                 }
             }
         }
-        Err(e) => { response.insert("status".to_string(), serde_json::json!(if e == 1 { 0 } else { 2 })); }
+        Err(e) => {
+            response.insert(
+                "status".to_string(),
+                serde_json::json!(if e == 1 { 0 } else { 2 }),
+            );
+        }
     }
 
     let json = serde_json::to_string(&response).unwrap_or_default();
     let len = json.len().min(out_max - 1);
-    unsafe { ptr::copy_nonoverlapping(json.as_ptr(), out_json as *mut u8, len); *out_json.add(len) = 0; }
+    unsafe {
+        ptr::copy_nonoverlapping(json.as_ptr(), out_json as *mut u8, len);
+        *out_json.add(len) = 0;
+    }
 
     let _ = Arc::into_raw(router);
-    if let Some(v) = validator { let _ = Arc::into_raw(v); }
+    if let Some(v) = validator {
+        let _ = Arc::into_raw(v);
+    }
     0
 }
 
@@ -457,13 +550,25 @@ pub unsafe extern "C" fn quill_validator_free(registry_ptr: *mut std::ffi::c_voi
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn quill_json_compact(input: *const c_char, input_len: usize, out_buf: *mut c_char, out_max: usize) -> usize {
-    if input.is_null() { return 0; }
-    let input_str = std::str::from_utf8(unsafe { slice::from_raw_parts(input as *const u8, input_len) }).unwrap_or("");
+pub unsafe extern "C" fn quill_json_compact(
+    input: *const c_char,
+    input_len: usize,
+    out_buf: *mut c_char,
+    out_max: usize,
+) -> usize {
+    if input.is_null() {
+        return 0;
+    }
+    let input_str =
+        std::str::from_utf8(unsafe { slice::from_raw_parts(input as *const u8, input_len) })
+            .unwrap_or("");
     if let Some(compacted) = json::compact_json(input_str) {
         let bytes = compacted.as_bytes();
         let len = bytes.len().min(out_max - 1);
-        unsafe { ptr::copy_nonoverlapping(bytes.as_ptr(), out_buf as *mut u8, len); *out_buf.add(len) = 0; }
+        unsafe {
+            ptr::copy_nonoverlapping(bytes.as_ptr(), out_buf as *mut u8, len);
+            *out_buf.add(len) = 0;
+        }
         return len;
     }
     0
@@ -481,11 +586,19 @@ pub extern "C" fn quill_server_prebind(port: u16) -> i32 {
     let Ok(socket) = Socket::new(Domain::IPV4, Type::STREAM, Some(Protocol::TCP)) else {
         return -1;
     };
-    if socket.set_reuse_address(true).is_err() { return -1; }
+    if socket.set_reuse_address(true).is_err() {
+        return -1;
+    }
     let _ = socket.set_reuse_port(true); // best-effort
-    if socket.bind(&addr.into()).is_err() { return -1; }
-    if socket.listen(4096).is_err() { return -1; }
-    if socket.set_nonblocking(true).is_err() { return -1; }
+    if socket.bind(&addr.into()).is_err() {
+        return -1;
+    }
+    if socket.listen(4096).is_err() {
+        return -1;
+    }
+    if socket.set_nonblocking(true).is_err() {
+        return -1;
+    }
 
     let fd = socket.into_raw_fd();
     SHARED_SOCKET_FD.store(fd, std::sync::atomic::Ordering::SeqCst);
@@ -494,5 +607,6 @@ pub extern "C" fn quill_server_prebind(port: u16) -> i32 {
 
 #[cfg(not(unix))]
 #[no_mangle]
-pub extern "C" fn quill_server_prebind(_port: u16) -> i32 { -1 }
-
+pub extern "C" fn quill_server_prebind(_port: u16) -> i32 {
+    -1
+}

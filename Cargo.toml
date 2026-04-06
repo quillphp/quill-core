@@ -5,6 +5,10 @@ edition = "2021"
 description = "High-performance binary engine for the Quill PHP Framework"
 license = "MIT"
 authors = ["Quill Authors"]
+repository = "https://github.com/quillphp/quill-core"
+readme = "README.md"
+keywords = ["php", "ffi", "high-performance", "quill", "engine"]
+categories = ["api-bindings", "web-programming::http-server"]
 
 [lib]
 name = "quill_core"

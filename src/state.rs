@@ -1,5 +1,5 @@
 use dashmap::DashMap;
-use sonic_rs::{Value, JsonValueTrait};
+use sonic_rs::{JsonValueTrait, Value};
 use std::sync::Arc;
 
 pub struct SharedState {
@@ -8,9 +8,7 @@ pub struct SharedState {
 
 impl SharedState {
     pub fn new() -> Self {
-        Self {
-            kv: DashMap::new(),
-        }
+        Self { kv: DashMap::new() }
     }
 
     pub fn set(&self, key: String, value: Value) {
@@ -27,11 +25,7 @@ impl SharedState {
 
     pub fn increment(&self, key: &str, delta: i64) -> i64 {
         let mut entry = self.kv.entry(key.to_string()).or_insert(Value::new_i64(0));
-        let current = if let Some(i) = entry.as_i64() {
-            i
-        } else {
-            0
-        };
+        let current = if let Some(i) = entry.as_i64() { i } else { 0 };
         let new_val = current + delta;
         *entry = Value::new_i64(new_val);
         new_val
@@ -45,8 +39,8 @@ impl SharedState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::thread;
     use std::sync::Barrier;
+    use std::thread;
 
     #[test]
     fn test_basic_set_get() {
@@ -78,7 +72,10 @@ mod tests {
             h.join().unwrap();
         }
 
-        assert_eq!(state.get("global_counter").and_then(|v| v.as_i64()), Some((thread_count * iterations) as i64));
+        assert_eq!(
+            state.get("global_counter").and_then(|v| v.as_i64()),
+            Some((thread_count * iterations) as i64)
+        );
     }
 
     #[test]
@@ -90,7 +87,10 @@ mod tests {
         }
 
         for i in 0..count {
-            assert_eq!(state.get(&format!("key_{}", i)).and_then(|v| v.as_i64()), Some(i as i64));
+            assert_eq!(
+                state.get(&format!("key_{}", i)).and_then(|v| v.as_i64()),
+                Some(i as i64)
+            );
         }
     }
 }

@@ -104,10 +104,10 @@ mod ax_rt {
             .with_state(state);
 
         let listener = make_listener(port)?;
-        
+
         // Graceful shutdown wiring
         let (close_tx, close_rx) = oneshot::channel::<()>();
-        
+
         #[cfg(unix)]
         {
             tokio::spawn(async move {
@@ -170,10 +170,11 @@ mod ax_rt {
                 }
 
                 let (tx, rx) = oneshot::channel();
-                
+
                 // Mix PID into Request ID to prevent collision after fork
                 let pid_bits = (std::process::id() & 0xFF) << 24;
-                let seq = super::REQUEST_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed) & 0x00FFFFFF;
+                let seq = super::REQUEST_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                    & 0x00FFFFFF;
                 let request_id = (pid_bits as u32) | seq;
 
                 let pending = PendingRequest {
@@ -196,7 +197,11 @@ mod ax_rt {
                             "status": 504,
                             "body": "Gateway Timeout (PHP handler timed out)"
                         });
-                        return (StatusCode::GATEWAY_TIMEOUT, sonic_rs::to_string(&err).unwrap()).into_response();
+                        return (
+                            StatusCode::GATEWAY_TIMEOUT,
+                            sonic_rs::to_string(&err).unwrap(),
+                        )
+                            .into_response();
                     }
                 };
 
@@ -290,7 +295,9 @@ pub unsafe extern "C" fn quill_router_match(
                 params_map.insert(k.to_string(), v.to_string());
             }
             let json = sonic_rs::to_string(&params_map).unwrap_or_default();
-            if out_params_max == 0 { return 0; }
+            if out_params_max == 0 {
+                return 0;
+            }
             let len = json.len().min(out_params_max - 1);
             unsafe {
                 ptr::copy_nonoverlapping(json.as_ptr(), out_params_json as *mut u8, len);
@@ -479,7 +486,9 @@ pub unsafe extern "C" fn quill_validator_validate(
     let res = match registry.validate(name, input) {
         Ok(val) => {
             let json = sonic_rs::to_string(&val).unwrap_or_default();
-            if out_max == 0 { return 0; }
+            if out_max == 0 {
+                return 0;
+            }
             let len = json.len().min(out_max - 1);
             unsafe {
                 ptr::copy_nonoverlapping(json.as_ptr(), out_json as *mut u8, len);
@@ -489,7 +498,9 @@ pub unsafe extern "C" fn quill_validator_validate(
         }
         Err(errors) => {
             let json = sonic_rs::to_string(&errors).unwrap_or_default();
-            if out_max == 0 { return 1; }
+            if out_max == 0 {
+                return 1;
+            }
             let len = json.len().min(out_max - 1);
             unsafe {
                 ptr::copy_nonoverlapping(json.as_ptr(), out_json as *mut u8, len);
@@ -562,7 +573,8 @@ pub unsafe extern "C" fn quill_router_dispatch(
                             response_fields.push((Value::from("dto_data"), data));
                         }
                         Err(errors) => {
-                            response_fields.push((Value::from("dto_valid"), sonic_rs::json!(false)));
+                            response_fields
+                                .push((Value::from("dto_valid"), sonic_rs::json!(false)));
                             let err_json = to_string(&errors).unwrap_or_default();
                             let err_val: Value = from_str(&err_json).unwrap_or_default();
                             response_fields.push((Value::from("dto_errors"), err_val));
@@ -618,7 +630,9 @@ pub unsafe extern "C" fn quill_json_compact(
             .unwrap_or("");
     if let Some(compacted) = json::compact_json(input_str) {
         let bytes = compacted.as_bytes();
-        if out_max == 0 { return 0; }
+        if out_max == 0 {
+            return 0;
+        }
         let len = bytes.len().min(out_max - 1);
         unsafe {
             ptr::copy_nonoverlapping(bytes.as_ptr(), out_buf as *mut u8, len);
@@ -679,7 +693,8 @@ pub unsafe extern "C" fn quill_shared_set(
     if key.is_null() || val_json.is_null() {
         return 1;
     }
-    let key_str = std::str::from_utf8(slice::from_raw_parts(key as *const u8, key_len)).unwrap_or("");
+    let key_str =
+        std::str::from_utf8(slice::from_raw_parts(key as *const u8, key_len)).unwrap_or("");
     let val_str =
         std::str::from_utf8(slice::from_raw_parts(val_json as *const u8, val_len)).unwrap_or("");
     if let Ok(val) = from_str::<Value>(val_str) {
@@ -700,7 +715,8 @@ pub unsafe extern "C" fn quill_shared_get(
     if key.is_null() || out_buf.is_null() || out_max == 0 {
         return 0;
     }
-    let key_str = std::str::from_utf8(slice::from_raw_parts(key as *const u8, key_len)).unwrap_or("");
+    let key_str =
+        std::str::from_utf8(slice::from_raw_parts(key as *const u8, key_len)).unwrap_or("");
     if let Some(val) = SHARED_STATE.get(key_str) {
         let json = to_string(&val).unwrap_or_default();
         if out_max == 0 {
@@ -720,7 +736,8 @@ pub unsafe extern "C" fn quill_shared_incr(key: *const c_char, key_len: usize, d
     if key.is_null() {
         return 0;
     }
-    let key_str = std::str::from_utf8(slice::from_raw_parts(key as *const u8, key_len)).unwrap_or("");
+    let key_str =
+        std::str::from_utf8(slice::from_raw_parts(key as *const u8, key_len)).unwrap_or("");
     SHARED_STATE.increment(key_str, delta)
 }
 
@@ -729,7 +746,8 @@ pub unsafe extern "C" fn quill_shared_remove(key: *const c_char, key_len: usize)
     if key.is_null() {
         return 1;
     }
-    let key_str = std::str::from_utf8(slice::from_raw_parts(key as *const u8, key_len)).unwrap_or("");
+    let key_str =
+        std::str::from_utf8(slice::from_raw_parts(key as *const u8, key_len)).unwrap_or("");
     if SHARED_STATE.remove(key_str).is_some() {
         0
     } else {
@@ -826,11 +844,21 @@ mod ssb_hardening_tests {
                     // Mix of operations
                     unsafe {
                         let k_cstr = CString::new(key.as_str()).unwrap();
-                        quill_shared_set(k_cstr.as_ptr(), key.len(), "\"value\"".as_ptr() as *const c_char, 7);
+                        quill_shared_set(
+                            k_cstr.as_ptr(),
+                            key.len(),
+                            "\"value\"".as_ptr() as *const c_char,
+                            7,
+                        );
                         quill_shared_incr(k_cstr.as_ptr(), key.len(), 1);
-                        
+
                         let buf = [0u8; 32];
-                        quill_shared_get(k_cstr.as_ptr(), key.len(), buf.as_ptr() as *mut c_char, 32);
+                        quill_shared_get(
+                            k_cstr.as_ptr(),
+                            key.len(),
+                            buf.as_ptr() as *mut c_char,
+                            32,
+                        );
                     }
                 }
             }));

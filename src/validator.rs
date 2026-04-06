@@ -40,7 +40,9 @@ impl ValidatorRegistry {
     pub fn new() -> Self {
         let regex_cache = DashMap::new();
         // Pre-seed with email regex
-        if let Ok(re) = Regex::new(r"^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$") {
+        if let Ok(re) = Regex::new(
+            r"^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$",
+        ) {
             regex_cache.insert("email".to_string(), re);
         }
 
@@ -233,12 +235,22 @@ mod tests {
         let registry = ValidatorRegistry::new();
         let rule = ValidationRule::Email;
 
-        assert!(registry.check_rule("email", &json!("user@example.com"), &rule).is_ok());
-        assert!(registry.check_rule("email", &json!("valid.email+alias@domain.co.uk"), &rule).is_ok());
+        assert!(registry
+            .check_rule("email", &json!("user@example.com"), &rule)
+            .is_ok());
+        assert!(registry
+            .check_rule("email", &json!("valid.email+alias@domain.co.uk"), &rule)
+            .is_ok());
 
-        assert!(registry.check_rule("email", &json!("invalid-email"), &rule).is_err());
-        assert!(registry.check_rule("email", &json!("@example.com"), &rule).is_err());
-        assert!(registry.check_rule("email", &json!("user@"), &rule).is_err());
+        assert!(registry
+            .check_rule("email", &json!("invalid-email"), &rule)
+            .is_err());
+        assert!(registry
+            .check_rule("email", &json!("@example.com"), &rule)
+            .is_err());
+        assert!(registry
+            .check_rule("email", &json!("user@"), &rule)
+            .is_err());
     }
 
     #[test]
@@ -262,4 +274,3 @@ mod tests {
         assert_eq!(registry.schemas.len(), 10);
     }
 }
-

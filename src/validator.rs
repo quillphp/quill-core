@@ -229,6 +229,7 @@ impl ValidatorRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sonic_rs::json;
 
     #[test]
     fn test_email_validation() {

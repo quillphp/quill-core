@@ -2,11 +2,14 @@
 mod json;
 mod manifest;
 mod router;
+mod state;
 mod validator;
 
 use dashmap::DashMap;
 use once_cell::sync::Lazy;
 use router::QuillRouter;
+use sonic_rs::{from_str, to_string, Value};
+use state::SharedState;
 use std::collections::HashMap;
 use std::ffi::c_char;
 use std::panic::catch_unwind;
@@ -19,6 +22,7 @@ use validator::ValidatorRegistry;
 
 static REQUEST_ID: AtomicU32 = AtomicU32::new(1);
 static SHARED_SOCKET_FD: AtomicI32 = AtomicI32::new(-1);
+static SHARED_STATE: Lazy<Arc<SharedState>> = Lazy::new(|| Arc::new(SharedState::new()));
 
 mod ax_rt {
     use super::{QuillRouter, ValidatorRegistry};
@@ -37,6 +41,7 @@ mod ax_rt {
     use std::sync::Arc;
     use tokio::net::TcpListener;
     use tokio::sync::{mpsc, oneshot};
+    use tokio::time::Duration;
 
     pub struct PendingRequest {
         pub id: u32,
@@ -99,7 +104,29 @@ mod ax_rt {
             .with_state(state);
 
         let listener = make_listener(port)?;
-        axum::serve(listener, app).await?;
+        
+        // Graceful shutdown wiring
+        let (close_tx, close_rx) = oneshot::channel::<()>();
+        
+        #[cfg(unix)]
+        {
+            tokio::spawn(async move {
+                use tokio::signal::unix::{signal, SignalKind};
+                let mut sigterm = signal(SignalKind::terminate()).unwrap();
+                let mut sigint = signal(SignalKind::interrupt()).unwrap();
+                tokio::select! {
+                    _ = sigterm.recv() => {},
+                    _ = sigint.recv() => {},
+                };
+                let _ = close_tx.send(());
+            });
+        }
+
+        axum::serve(listener, app)
+            .with_graceful_shutdown(async move {
+                let _ = close_rx.await;
+            })
+            .await?;
         Ok(())
     }
 
@@ -120,7 +147,7 @@ mod ax_rt {
                         sonic_rs::to_string(&params_map).unwrap_or_else(|_| "{}".to_string());
                 }
 
-                let body_bytes = axum::body::to_bytes(req.into_body(), 10 * 1024 * 1024)
+                let body_bytes = axum::body::to_bytes(req.into_body(), matched.value.max_body_size)
                     .await
                     .unwrap_or_default();
                 let body_str = std::str::from_utf8(&body_bytes).unwrap_or("");
@@ -143,8 +170,11 @@ mod ax_rt {
                 }
 
                 let (tx, rx) = oneshot::channel();
-                let request_id =
-                    super::REQUEST_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                
+                // Mix PID into Request ID to prevent collision after fork
+                let pid_bits = (std::process::id() & 0xFF) << 24;
+                let seq = super::REQUEST_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed) & 0x00FFFFFF;
+                let request_id = (pid_bits as u32) | seq;
 
                 let pending = PendingRequest {
                     id: request_id,
@@ -158,7 +188,17 @@ mod ax_rt {
                     return (StatusCode::SERVICE_UNAVAILABLE, "Server busy").into_response();
                 }
 
-                let res_json = rx.await.unwrap_or_else(|_| "{}".to_string());
+                // 30s timeout for PHP response
+                let res_json = match tokio::time::timeout(Duration::from_secs(30), rx).await {
+                    Ok(res) => res.unwrap_or_else(|_| "{}".to_string()),
+                    Err(_) => {
+                        let err = sonic_rs::json!({
+                            "status": 504,
+                            "body": "Gateway Timeout (PHP handler timed out)"
+                        });
+                        return (StatusCode::GATEWAY_TIMEOUT, sonic_rs::to_string(&err).unwrap()).into_response();
+                    }
+                };
 
                 let php_res: sonic_rs::Value =
                     sonic_rs::from_str(&res_json).unwrap_or_else(|_| sonic_rs::json!({}));
@@ -250,6 +290,7 @@ pub unsafe extern "C" fn quill_router_match(
                 params_map.insert(k.to_string(), v.to_string());
             }
             let json = sonic_rs::to_string(&params_map).unwrap_or_default();
+            if out_params_max == 0 { return 0; }
             let len = json.len().min(out_params_max - 1);
             unsafe {
                 ptr::copy_nonoverlapping(json.as_ptr(), out_params_json as *mut u8, len);
@@ -300,16 +341,19 @@ pub unsafe extern "C" fn quill_server_listen(
         request_tx: tx,
     });
 
-    std::thread::spawn(move || {
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
+    std::thread::Builder::new()
+        .name("quill-worker".into())
+        .spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
 
-        rt.block_on(async {
-            let _ = ax_rt::start_server(port, state).await;
-        });
-    });
+            rt.block_on(async {
+                let _ = ax_rt::start_server(port, state).await;
+            });
+        })
+        .expect("Failed to spawn worker thread");
 
     let _ = Arc::into_raw(router);
     if let Some(v) = validator {
@@ -339,17 +383,21 @@ pub unsafe extern "C" fn quill_server_poll(
             }
 
             let p_bytes = req.params_json.as_bytes();
-            let p_len = p_bytes.len().min(out_params_max - 1);
-            unsafe {
-                ptr::copy_nonoverlapping(p_bytes.as_ptr(), out_params_json as *mut u8, p_len);
-                *out_params_json.add(p_len) = 0;
+            if out_params_max > 0 {
+                let p_len = p_bytes.len().min(out_params_max - 1);
+                unsafe {
+                    ptr::copy_nonoverlapping(p_bytes.as_ptr(), out_params_json as *mut u8, p_len);
+                    *out_params_json.add(p_len) = 0;
+                }
             }
 
             let d_bytes = req.dto_data_json.as_bytes();
-            let d_len = d_bytes.len().min(out_dto_max - 1);
-            unsafe {
-                ptr::copy_nonoverlapping(d_bytes.as_ptr(), out_dto_json as *mut u8, d_len);
-                *out_dto_json.add(d_len) = 0;
+            if out_dto_max > 0 {
+                let d_len = d_bytes.len().min(out_dto_max - 1);
+                unsafe {
+                    ptr::copy_nonoverlapping(d_bytes.as_ptr(), out_dto_json as *mut u8, d_len);
+                    *out_dto_json.add(d_len) = 0;
+                }
             }
 
             PENDING_RESPONSES.insert(req.id, req.response_tx);
@@ -366,6 +414,7 @@ pub unsafe extern "C" fn quill_server_respond(
     response_len: usize,
 ) -> i32 {
     if let Some((_, tx)) = PENDING_RESPONSES.remove(&id) {
+        let tx: oneshot::Sender<String> = tx;
         let slice = unsafe { slice::from_raw_parts(response_json as *const u8, response_len) };
         let response = std::str::from_utf8(slice).unwrap_or("{}").to_string();
         let _ = tx.send(response);
@@ -397,8 +446,7 @@ pub unsafe extern "C" fn quill_validator_register(
         std::str::from_utf8(unsafe { slice::from_raw_parts(schema_json as *const u8, schema_len) })
             .unwrap_or("");
 
-    let ptr = Arc::as_ptr(&registry) as *mut ValidatorRegistry;
-    let res = match unsafe { (*ptr).register(name.to_string(), schema) } {
+    let res = match registry.register(name.to_string(), schema) {
         Ok(_) => 0,
         Err(_) => 1,
     };
@@ -431,6 +479,7 @@ pub unsafe extern "C" fn quill_validator_validate(
     let res = match registry.validate(name, input) {
         Ok(val) => {
             let json = sonic_rs::to_string(&val).unwrap_or_default();
+            if out_max == 0 { return 0; }
             let len = json.len().min(out_max - 1);
             unsafe {
                 ptr::copy_nonoverlapping(json.as_ptr(), out_json as *mut u8, len);
@@ -440,6 +489,7 @@ pub unsafe extern "C" fn quill_validator_validate(
         }
         Err(errors) => {
             let json = sonic_rs::to_string(&errors).unwrap_or_default();
+            if out_max == 0 { return 1; }
             let len = json.len().min(out_max - 1);
             unsafe {
                 ptr::copy_nonoverlapping(json.as_ptr(), out_json as *mut u8, len);
@@ -482,20 +532,19 @@ pub unsafe extern "C" fn quill_router_dispatch(
     let path_str =
         std::str::from_utf8(unsafe { slice::from_raw_parts(path as *const u8, path_len) })
             .unwrap_or("");
-    let mut response = serde_json::Map::new();
-
+    let mut response_fields: Vec<(Value, Value)> = Vec::new();
     match router.match_route(method_str, path_str) {
         Ok(matched) => {
-            response.insert("status".to_string(), serde_json::json!(1));
-            response.insert(
-                "handler_id".to_string(),
-                serde_json::json!(matched.value.handler_id),
-            );
-            let mut params = serde_json::Map::new();
+            response_fields.push((Value::from("status"), sonic_rs::json!(1)));
+            response_fields.push((
+                Value::from("handler_id"),
+                sonic_rs::json!(matched.value.handler_id),
+            ));
+            let mut params_fields: Vec<(Value, Value)> = Vec::new();
             for (k, v) in matched.params.iter() {
-                params.insert(k.to_string(), serde_json::json!(v));
+                params_fields.push((Value::from(k), sonic_rs::json!(v)));
             }
-            response.insert("params".to_string(), serde_json::Value::Object(params));
+            response_fields.push((Value::from("params"), Value::from(&params_fields[..])));
 
             if let Some(dto_name) = &matched.value.dto_class {
                 if let Some(v_reg) = &validator {
@@ -509,30 +558,35 @@ pub unsafe extern "C" fn quill_router_dispatch(
                     };
                     match v_reg.validate(dto_name, body_str) {
                         Ok(data) => {
-                            response.insert("dto_valid".to_string(), serde_json::json!(true));
-                            response.insert("dto_data".to_string(), data);
+                            response_fields.push((Value::from("dto_valid"), sonic_rs::json!(true)));
+                            response_fields.push((Value::from("dto_data"), data));
                         }
                         Err(errors) => {
-                            response.insert("dto_valid".to_string(), serde_json::json!(false));
-                            response.insert("dto_errors".to_string(), serde_json::json!(errors));
+                            response_fields.push((Value::from("dto_valid"), sonic_rs::json!(false)));
+                            let err_json = to_string(&errors).unwrap_or_default();
+                            let err_val: Value = from_str(&err_json).unwrap_or_default();
+                            response_fields.push((Value::from("dto_errors"), err_val));
                         }
                     }
                 }
             }
         }
         Err(e) => {
-            response.insert(
-                "status".to_string(),
-                serde_json::json!(if e == 1 { 0 } else { 2 }),
-            );
+            response_fields.push((
+                Value::from("status"),
+                sonic_rs::json!(if e == 1 { 0 } else { 2 }),
+            ));
         }
     }
 
-    let json = serde_json::to_string(&response).unwrap_or_default();
-    let len = json.len().min(out_max - 1);
-    unsafe {
-        ptr::copy_nonoverlapping(json.as_ptr(), out_json as *mut u8, len);
-        *out_json.add(len) = 0;
+    let response = Value::from(&response_fields[..]);
+    let json = sonic_rs::to_string(&response).unwrap_or_default();
+    if out_max > 0 {
+        let len = json.len().min(out_max - 1);
+        unsafe {
+            ptr::copy_nonoverlapping(json.as_ptr(), out_json as *mut u8, len);
+            *out_json.add(len) = 0;
+        }
     }
 
     let _ = Arc::into_raw(router);
@@ -564,6 +618,7 @@ pub unsafe extern "C" fn quill_json_compact(
             .unwrap_or("");
     if let Some(compacted) = json::compact_json(input_str) {
         let bytes = compacted.as_bytes();
+        if out_max == 0 { return 0; }
         let len = bytes.len().min(out_max - 1);
         unsafe {
             ptr::copy_nonoverlapping(bytes.as_ptr(), out_buf as *mut u8, len);
@@ -608,5 +663,182 @@ pub extern "C" fn quill_server_prebind(port: u16) -> i32 {
 #[cfg(not(unix))]
 #[no_mangle]
 pub extern "C" fn quill_server_prebind(_port: u16) -> i32 {
+    // Platform not supported for pre-fork multi-worker model
     -1
+}
+
+// --- Quill Shared State Broker (SSB) FFI ---
+
+#[no_mangle]
+pub unsafe extern "C" fn quill_shared_set(
+    key: *const c_char,
+    key_len: usize,
+    val_json: *const c_char,
+    val_len: usize,
+) -> i32 {
+    if key.is_null() || val_json.is_null() {
+        return 1;
+    }
+    let key_str = std::str::from_utf8(slice::from_raw_parts(key as *const u8, key_len)).unwrap_or("");
+    let val_str =
+        std::str::from_utf8(slice::from_raw_parts(val_json as *const u8, val_len)).unwrap_or("");
+    if let Ok(val) = from_str::<Value>(val_str) {
+        SHARED_STATE.set(key_str.to_string(), val);
+        0
+    } else {
+        1
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn quill_shared_get(
+    key: *const c_char,
+    key_len: usize,
+    out_buf: *mut c_char,
+    out_max: usize,
+) -> usize {
+    if key.is_null() || out_buf.is_null() || out_max == 0 {
+        return 0;
+    }
+    let key_str = std::str::from_utf8(slice::from_raw_parts(key as *const u8, key_len)).unwrap_or("");
+    if let Some(val) = SHARED_STATE.get(key_str) {
+        let json = to_string(&val).unwrap_or_default();
+        if out_max == 0 {
+            return 0;
+        }
+        let len = json.len().min(out_max - 1);
+        ptr::copy_nonoverlapping(json.as_ptr(), out_buf as *mut u8, len);
+        *out_buf.add(len) = 0;
+        len
+    } else {
+        0
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn quill_shared_incr(key: *const c_char, key_len: usize, delta: i64) -> i64 {
+    if key.is_null() {
+        return 0;
+    }
+    let key_str = std::str::from_utf8(slice::from_raw_parts(key as *const u8, key_len)).unwrap_or("");
+    SHARED_STATE.increment(key_str, delta)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn quill_shared_remove(key: *const c_char, key_len: usize) -> i32 {
+    if key.is_null() {
+        return 1;
+    }
+    let key_str = std::str::from_utf8(slice::from_raw_parts(key as *const u8, key_len)).unwrap_or("");
+    if SHARED_STATE.remove(key_str).is_some() {
+        0
+    } else {
+        1
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn quill_shared_keys(out_buf: *mut c_char, out_max: usize) -> usize {
+    if out_max == 0 {
+        return 0;
+    }
+    let keys = SHARED_STATE.keys();
+    let json = to_string(&keys).unwrap_or_else(|_| "[]".to_string());
+    let len = json.len().min(out_max - 1);
+    ptr::copy_nonoverlapping(json.as_ptr(), out_buf as *mut u8, len);
+    *out_buf.add(len) = 0;
+    len
+}
+
+#[cfg(test)]
+mod ssb_hardening_tests {
+    use super::*;
+    use std::ffi::CString;
+
+    #[test]
+    fn test_ffi_invalid_utf8() {
+        // Invalid UTF-8 sequence
+        let invalid_key = [0, 159, 146, 150];
+        let val = CString::new("123").unwrap();
+
+        unsafe {
+            let res = quill_shared_set(
+                invalid_key.as_ptr() as *const c_char,
+                invalid_key.len(),
+                val.as_ptr(),
+                3,
+            );
+            // Should handle gracefully (unwrap_or("") in code)
+            assert_eq!(res, 0);
+        }
+    }
+
+    #[test]
+    fn test_ffi_null_pointer_safety() {
+        unsafe {
+            // We can't easily pass literal NULL to reference-checked Rust in some contexts,
+            // but we can pass a raw pointer.
+            let res = quill_shared_set(ptr::null(), 0, ptr::null(), 0);
+            assert_eq!(res, 1); // Fails because from_str::<Value>("") is Err
+        }
+    }
+
+    #[test]
+    fn test_buffer_edge_cases() {
+        let key = CString::new("buf_test").unwrap();
+        let val_json = "\"hello world\""; // 13 chars
+        let val = CString::new(val_json).unwrap();
+
+        unsafe {
+            quill_shared_set(key.as_ptr(), 8, val.as_ptr(), 13);
+
+            // 1. Exact size (needs 13 + 1 for null = 14)
+            let buf = [0u8; 14];
+            let len = quill_shared_get(key.as_ptr(), 8, buf.as_ptr() as *mut c_char, 14);
+            assert_eq!(len, 13);
+            assert_eq!(buf[13], 0);
+
+            // 2. Underflow (out_max = 5)
+            let buf2 = [0u8; 5];
+            let len2 = quill_shared_get(key.as_ptr(), 8, buf2.as_ptr() as *mut c_char, 5);
+            assert_eq!(len2, 4); // max - 1
+            assert_eq!(buf2[4], 0);
+            assert_eq!(std::str::from_utf8(&buf2[..4]).unwrap(), "\"hel");
+
+            // 3. Zero size
+            let len3 = quill_shared_get(key.as_ptr(), 8, ptr::null_mut(), 0);
+            assert_eq!(len3, 0);
+        }
+    }
+
+    #[test]
+    fn test_massive_concurrency_soak() {
+        let _state = Arc::new(SharedState::new());
+        let thread_count = 200;
+        let iterations = 5000;
+        let mut handles = Vec::new();
+
+        let start = std::time::Instant::now();
+        for t in 0..thread_count {
+            handles.push(std::thread::spawn(move || {
+                let key = format!("thread_{}", t);
+                for _i in 0..iterations {
+                    // Mix of operations
+                    unsafe {
+                        let k_cstr = CString::new(key.as_str()).unwrap();
+                        quill_shared_set(k_cstr.as_ptr(), key.len(), "\"value\"".as_ptr() as *const c_char, 7);
+                        quill_shared_incr(k_cstr.as_ptr(), key.len(), 1);
+                        
+                        let buf = [0u8; 32];
+                        quill_shared_get(k_cstr.as_ptr(), key.len(), buf.as_ptr() as *mut c_char, 32);
+                    }
+                }
+            }));
+        }
+
+        for h in handles {
+            h.join().unwrap();
+        }
+        println!("Soak test finished in {:?}", start.elapsed());
+    }
 }

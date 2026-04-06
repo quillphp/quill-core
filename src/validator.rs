@@ -1,6 +1,7 @@
+use dashmap::DashMap;
 use regex::Regex;
 use serde::Deserialize;
-use serde_json::Value;
+use sonic_rs::{from_str, json, JsonValueTrait, Value};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -31,20 +32,26 @@ pub struct DtoSchema {
 }
 
 pub struct ValidatorRegistry {
-    schemas: HashMap<String, DtoSchema>,
-    regex_cache: HashMap<String, Regex>,
+    schemas: DashMap<String, DtoSchema>,
+    regex_cache: DashMap<String, Regex>,
 }
 
 impl ValidatorRegistry {
     pub fn new() -> Self {
+        let regex_cache = DashMap::new();
+        // Pre-seed with email regex
+        if let Ok(re) = Regex::new(r"^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$") {
+            regex_cache.insert("email".to_string(), re);
+        }
+
         Self {
-            schemas: HashMap::new(),
-            regex_cache: HashMap::new(),
+            schemas: DashMap::new(),
+            regex_cache,
         }
     }
 
-    pub fn register(&mut self, name: String, schema_json: &str) -> Result<(), String> {
-        let schema: DtoSchema = serde_json::from_str(schema_json).map_err(|e| e.to_string())?;
+    pub fn register(&self, name: String, schema_json: &str) -> Result<(), String> {
+        let schema: DtoSchema = from_str(schema_json).map_err(|e| e.to_string())?;
 
         // Pre-compile regexes
         for field in schema.fields.values() {
@@ -76,14 +83,14 @@ impl ValidatorRegistry {
             err
         })?;
 
-        let input: Value = serde_json::from_str(input_json).map_err(|_| {
+        let input: Value = from_str(input_json).map_err(|_| {
             let mut err = HashMap::new();
             err.insert("system".to_string(), vec!["Invalid JSON input".to_string()]);
             err
         })?;
 
         let mut errors = HashMap::new();
-        let mut validated_data = serde_json::Map::new();
+        let mut validated_data: Vec<(Value, Value)> = Vec::new();
 
         for (name, field) in &schema.fields {
             let value = input.get(name).cloned().or_else(|| {
@@ -95,14 +102,24 @@ impl ValidatorRegistry {
             });
 
             match value {
-                Some(Value::Null) | None => {
+                Some(val) if val.is_null() => {
                     if !field.is_nullable && !field.has_default {
                         errors
                             .entry(name.clone())
                             .or_insert_with(Vec::new)
                             .push(format!("Field '{}' is required.", name));
                     } else {
-                        validated_data.insert(name.clone(), Value::Null);
+                        validated_data.push((Value::from(name.as_str()), Value::default()));
+                    }
+                }
+                None => {
+                    if !field.is_nullable && !field.has_default {
+                        errors
+                            .entry(name.clone())
+                            .or_insert_with(Vec::new)
+                            .push(format!("Field '{}' is required.", name));
+                    } else {
+                        validated_data.push((Value::from(name.as_str()), Value::default()));
                     }
                 }
                 Some(val) => {
@@ -114,7 +131,7 @@ impl ValidatorRegistry {
                     }
 
                     if field_errors.is_empty() {
-                        validated_data.insert(name.clone(), val);
+                        validated_data.push((Value::from(name.as_str()), val));
                     } else {
                         errors.insert(name.clone(), field_errors);
                     }
@@ -123,7 +140,7 @@ impl ValidatorRegistry {
         }
 
         if errors.is_empty() {
-            Ok(Value::Object(validated_data))
+            Ok(Value::from(&validated_data[..]))
         } else {
             Err(errors)
         }
@@ -138,12 +155,13 @@ impl ValidatorRegistry {
             }
             ValidationRule::Email => {
                 if let Some(s) = value.as_str() {
-                    if !s.contains('@') {
-                        // Simple check for now, can use a regex
-                        return Err(format!(
-                            "The field '{}' must be a valid email address.",
-                            field
-                        ));
+                    if let Some(re) = self.regex_cache.get("email") {
+                        if !re.is_match(s) {
+                            return Err(format!(
+                                "The field '{}' must be a valid email address.",
+                                field
+                            ));
+                        }
                     }
                 }
             }
@@ -205,3 +223,43 @@ impl ValidatorRegistry {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_email_validation() {
+        let registry = ValidatorRegistry::new();
+        let rule = ValidationRule::Email;
+
+        assert!(registry.check_rule("email", &json!("user@example.com"), &rule).is_ok());
+        assert!(registry.check_rule("email", &json!("valid.email+alias@domain.co.uk"), &rule).is_ok());
+
+        assert!(registry.check_rule("email", &json!("invalid-email"), &rule).is_err());
+        assert!(registry.check_rule("email", &json!("@example.com"), &rule).is_err());
+        assert!(registry.check_rule("email", &json!("user@"), &rule).is_err());
+    }
+
+    #[test]
+    fn test_concurrent_registration() {
+        let registry = std::sync::Arc::new(ValidatorRegistry::new());
+        let mut handles = vec![];
+
+        for i in 0..10 {
+            let reg = std::sync::Arc::clone(&registry);
+            handles.push(std::thread::spawn(move || {
+                let name = format!("dto_{}", i);
+                let schema = r#"{"fields": {"id": {"rules": [{"type": "Numeric"}], "is_nullable": false, "has_default": false}}}"#;
+                reg.register(name, schema).unwrap();
+            }));
+        }
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        assert_eq!(registry.schemas.len(), 10);
+    }
+}
+

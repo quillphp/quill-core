@@ -6,6 +6,7 @@ use std::collections::HashMap;
 pub struct RouteMetadata {
     pub handler_id: u32,
     pub dto_class: Option<String>,
+    pub max_body_size: usize,
 }
 
 pub struct QuillRouter {
@@ -23,6 +24,7 @@ impl QuillRouter {
             let metadata = RouteMetadata {
                 handler_id: entry.handler_id,
                 dto_class: entry.dto_class,
+                max_body_size: entry.max_body_size.unwrap_or(10 * 1024 * 1024), // 10MB default
             };
             let _ = router.insert(entry.pattern, metadata);
         }

@@ -1,6 +1,6 @@
 [package]
 name = "quill-core"
-version = "0.0.2"
+version = "0.0.3"
 edition = "2021"
 description = "High-performance binary engine for the Quill PHP Framework"
 license = "MIT"

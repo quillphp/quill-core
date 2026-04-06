@@ -1,6 +1,9 @@
 #ifndef QUILL_H
 #define QUILL_H
 
+#include <stddef.h>
+#include <stdint.h>
+
 void*  quill_router_build(const char* manifest_json, size_t manifest_len);
 int    quill_router_match(void* router, const char* method, size_t method_len,
                            const char* path, size_t path_len,
@@ -24,5 +27,12 @@ int quill_server_listen(void* router, void* validator, uint16_t port);
 int quill_server_prebind(uint16_t port);
 int quill_server_poll(void* out_id, void* out_handler_id, char* out_params_json, size_t out_params_max, char* out_dto_json, size_t out_dto_max);
 int quill_server_respond(uint32_t id, const char* response_json, size_t response_len);
+
+// --- Quill Shared-State Broker (SSB) ---
+int    quill_shared_set(const char* key, size_t key_len, const char* val_json, size_t val_len);
+size_t quill_shared_get(const char* key, size_t key_len, char* out_buf, size_t out_max);
+int64_t quill_shared_incr(const char* key, size_t key_len, int64_t delta);
+int    quill_shared_remove(const char* key, size_t key_len);
+size_t quill_shared_keys(char* out_buf, size_t out_max);
 
 #endif

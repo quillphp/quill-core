@@ -175,7 +175,7 @@ mod ax_rt {
                 let pid_bits = (std::process::id() & 0xFF) << 24;
                 let seq = super::REQUEST_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
                     & 0x00FFFFFF;
-                let request_id = (pid_bits as u32) | seq;
+                let request_id = pid_bits | seq;
 
                 let pending = PendingRequest {
                     id: request_id,

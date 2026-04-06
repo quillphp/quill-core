@@ -1,6 +1,5 @@
 use dashmap::DashMap;
 use sonic_rs::{JsonValueTrait, Value};
-use std::sync::Arc;
 
 pub struct SharedState {
     kv: DashMap<String, Value>,
@@ -25,7 +24,7 @@ impl SharedState {
 
     pub fn increment(&self, key: &str, delta: i64) -> i64 {
         let mut entry = self.kv.entry(key.to_string()).or_insert(Value::new_i64(0));
-        let current = if let Some(i) = entry.as_i64() { i } else { 0 };
+        let current = entry.as_i64().unwrap_or_default();
         let new_val = current + delta;
         *entry = Value::new_i64(new_val);
         new_val
@@ -39,7 +38,7 @@ impl SharedState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Barrier;
+    use std::sync::{Arc, Barrier};
     use std::thread;
 
     #[test]

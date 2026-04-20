@@ -429,7 +429,7 @@ pub unsafe extern "C" fn quill_router_match(
         let path_str =
             std::str::from_utf8(unsafe { slice::from_raw_parts(path as *const u8, path_len) })
                 .unwrap_or("");
- 
+
         match router.match_route(method_str, path_str) {
             Ok(matched) => {
                 unsafe {

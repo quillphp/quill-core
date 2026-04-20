@@ -537,7 +537,7 @@ pub unsafe extern "C" fn quill_server_stats() -> *const c_char {
     let total = TOTAL_REQUESTS.load(std::sync::atomic::Ordering::Relaxed);
     let active = ACTIVE_REQUESTS.load(std::sync::atomic::Ordering::Relaxed);
     let latency_total = TOTAL_LATENCY_US.load(std::sync::atomic::Ordering::Relaxed);
-    let avg_latency = if total > 0 { latency_total / total } else { 0 };
+    let avg_latency = latency_total.checked_div(total).unwrap_or(0);
     let queue_depth = POLL_RECEIVER.get().map(|r| r.len()).unwrap_or(0);
     let workers = SERVER_WORKERS.load(std::sync::atomic::Ordering::Relaxed);
 

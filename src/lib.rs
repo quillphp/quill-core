@@ -100,7 +100,6 @@ mod ax_rt {
         Ok(TcpListener::from_std(std_listener)?)
     }
 
-
     pub async fn start_server(
         port: u16,
         state: Arc<ServerState>,
@@ -135,7 +134,7 @@ mod ax_rt {
         .await?;
         Ok(())
     }
- 
+
     async fn handle_request(
         State(state): State<Arc<ServerState>>,
         ConnectInfo(addr): ConnectInfo<SocketAddr>,
@@ -153,7 +152,11 @@ mod ax_rt {
         res
     }
 
-    async fn handle_request_inner(state: Arc<ServerState>, addr: SocketAddr, req: Request) -> Response {
+    async fn handle_request_inner(
+        state: Arc<ServerState>,
+        addr: SocketAddr,
+        req: Request,
+    ) -> Response {
         let start = std::time::Instant::now();
         let method = req.method().to_string();
         let path = req.uri().path().to_string();
@@ -168,7 +171,7 @@ mod ax_rt {
                 if matched.params.is_empty() && matched.value.dto_class.is_none() {
                     if let Some(preloaded) = super::NATIVE_RESPONSES.get(&handler_id) {
                         let cached: &super::NativeResponse = preloaded.value();
-                        
+
                         // 🟢 NATIVE LOGGING
                         let duration_fast = start.elapsed().as_micros();
                         let dur_str = format!("{}µs", duration_fast);
@@ -180,9 +183,15 @@ mod ax_rt {
 
                         // File Logging
                         if let Some(log_path) = super::LOG_FILE.get() {
-                            if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(log_path) {
+                            if let Ok(mut file) = std::fs::OpenOptions::new()
+                                .create(true)
+                                .append(true)
+                                .open(log_path)
+                            {
                                 use std::io::Write;
-                                let apache_ts = chrono::Local::now().format("%d/%b/%Y:%H:%M:%S %z").to_string();
+                                let apache_ts = chrono::Local::now()
+                                    .format("%d/%b/%Y:%H:%M:%S %z")
+                                    .to_string();
                                 let line = format!(
                                     "{} - - [{}] \"{} {} HTTP/1.1\" 200 0 \"-\" \"-\" {}µs\n",
                                     ip, apache_ts, method, path, duration_fast
@@ -232,7 +241,8 @@ mod ax_rt {
                 for (k, v) in matched.params.iter() {
                     params_map.insert(k.to_string(), v.to_string());
                 }
-                let params_json = sonic_rs::to_string(&params_map).unwrap_or_else(|_| "{}".to_string());
+                let params_json =
+                    sonic_rs::to_string(&params_map).unwrap_or_else(|_| "{}".to_string());
 
                 let mut dto_data_json = "null".to_string();
                 if let Some(dto_name) = &matched.value.dto_class {
@@ -310,9 +320,21 @@ mod ax_rt {
             }
             Err(err_code) => {
                 let (status, _err_label, err_detail) = match err_code {
-                    1 => (StatusCode::NOT_FOUND, "Not Found", json!({"error": "Not Found", "status": 404, "path": path})),
-                    2 => (StatusCode::METHOD_NOT_ALLOWED, "Method Not Allowed", json!({"error": "Method Not Allowed", "status": 405, "method": method})),
-                    _ => (StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error", json!({"error": "Internal Server Error", "status": 500})),
+                    1 => (
+                        StatusCode::NOT_FOUND,
+                        "Not Found",
+                        json!({"error": "Not Found", "status": 404, "path": path}),
+                    ),
+                    2 => (
+                        StatusCode::METHOD_NOT_ALLOWED,
+                        "Method Not Allowed",
+                        json!({"error": "Method Not Allowed", "status": 405, "method": method}),
+                    ),
+                    _ => (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "Internal Server Error",
+                        json!({"error": "Internal Server Error", "status": 500}),
+                    ),
                 };
 
                 // 🔴 NATIVE ERROR LOGGING
@@ -327,9 +349,15 @@ mod ax_rt {
 
                 // File Logging for errors
                 if let Some(log_path) = super::LOG_FILE.get() {
-                    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(log_path) {
+                    if let Ok(mut file) = std::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(log_path)
+                    {
                         use std::io::Write;
-                        let apache_ts = chrono::Local::now().format("%d/%b/%Y:%H:%M:%S %z").to_string();
+                        let apache_ts = chrono::Local::now()
+                            .format("%d/%b/%Y:%H:%M:%S %z")
+                            .to_string();
                         let line = format!(
                             "{} - - [{}] \"{} {} HTTP/1.1\" {} 0 \"-\" \"-\" {}µs\n",
                             ip, apache_ts, method, path, status_code, duration_err
@@ -367,6 +395,7 @@ pub extern "C" fn quill_router_build(
     }
     catch_unwind(|| {
         let slice = unsafe { slice::from_raw_parts(manifest_json as *const u8, manifest_len) };
+
         if let Ok(json_str) = std::str::from_utf8(slice) {
             if let Some(router) = QuillRouter::new(json_str) {
                 return Arc::into_raw(Arc::new(router)) as *mut std::ffi::c_void;
@@ -551,8 +580,12 @@ pub unsafe extern "C" fn quill_server_drain(timeout_ms: u32) -> i32 {
 
 #[no_mangle]
 pub unsafe extern "C" fn quill_server_set_log_file(path: *const c_char) {
-    if path.is_null() { return; }
-    let path_str = std::ffi::CStr::from_ptr(path).to_string_lossy().into_owned();
+    if path.is_null() {
+        return;
+    }
+    let path_str = std::ffi::CStr::from_ptr(path)
+        .to_string_lossy()
+        .into_owned();
     let _ = LOG_FILE.set(path_str);
 }
 
@@ -577,16 +610,20 @@ pub unsafe extern "C" fn quill_server_poll(
                     *out_id = req.id;
                     *out_handler_id = req.handler_id;
                 }
- 
+
                 let p_bytes = req.params_json.as_bytes();
                 if out_params_max > 0 && !out_params_json.is_null() {
                     let p_len = p_bytes.len().min(out_params_max - 1);
                     unsafe {
-                        ptr::copy_nonoverlapping(p_bytes.as_ptr(), out_params_json as *mut u8, p_len);
+                        ptr::copy_nonoverlapping(
+                            p_bytes.as_ptr(),
+                            out_params_json as *mut u8,
+                            p_len,
+                        );
                         *out_params_json.add(p_len) = 0;
                     }
                 }
- 
+
                 let d_bytes = req.dto_data_json.as_bytes();
                 if out_dto_max > 0 && !out_dto_json.is_null() {
                     let d_len = d_bytes.len().min(out_dto_max - 1);
@@ -595,7 +632,7 @@ pub unsafe extern "C" fn quill_server_poll(
                         *out_dto_json.add(d_len) = 0;
                     }
                 }
- 
+
                 PENDING_RESPONSES.insert(req.id, req.response_tx);
                 return 1;
             }
@@ -661,7 +698,14 @@ pub unsafe extern "C" fn quill_route_preload(
                 }
             }
         }
-        NATIVE_RESPONSES.insert(handler_id, NativeResponse { status, body, headers });
+        NATIVE_RESPONSES.insert(
+            handler_id,
+            NativeResponse {
+                status,
+                body,
+                headers,
+            },
+        );
         0
     }));
     result.unwrap_or(-1)
@@ -685,11 +729,13 @@ pub unsafe extern "C" fn quill_validator_register(
             return 1;
         }
         let registry = unsafe { &*(registry_ptr as *mut ValidatorRegistry) };
-        let name_str = std::str::from_utf8(unsafe { slice::from_raw_parts(name as *const u8, name_len) })
-            .unwrap_or("");
-        let schema_str =
-            std::str::from_utf8(unsafe { slice::from_raw_parts(schema_json as *const u8, schema_len) })
+        let name_str =
+            std::str::from_utf8(unsafe { slice::from_raw_parts(name as *const u8, name_len) })
                 .unwrap_or("");
+        let schema_str = std::str::from_utf8(unsafe {
+            slice::from_raw_parts(schema_json as *const u8, schema_len)
+        })
+        .unwrap_or("");
 
         match registry.register(name_str.to_string(), schema_str) {
             Ok(_) => 0,
@@ -714,12 +760,14 @@ pub unsafe extern "C" fn quill_validator_validate(
             return 2;
         }
         let registry = unsafe { &*(registry_ptr as *const ValidatorRegistry) };
-        let name =
-            std::str::from_utf8(unsafe { slice::from_raw_parts(dto_name as *const u8, dto_name_len) })
-                .unwrap_or("");
-        let input =
-            std::str::from_utf8(unsafe { slice::from_raw_parts(input_json as *const u8, input_len) })
-                .unwrap_or("");
+        let name = std::str::from_utf8(unsafe {
+            slice::from_raw_parts(dto_name as *const u8, dto_name_len)
+        })
+        .unwrap_or("");
+        let input = std::str::from_utf8(unsafe {
+            slice::from_raw_parts(input_json as *const u8, input_len)
+        })
+        .unwrap_or("");
 
         match registry.validate(name, input) {
             Ok(val) => {
@@ -805,7 +853,8 @@ pub unsafe extern "C" fn quill_router_dispatch(
                         };
                         match v_reg.validate(dto_name, body_str) {
                             Ok(data) => {
-                                response_fields.push((Value::from("dto_valid"), sonic_rs::json!(true)));
+                                response_fields
+                                    .push((Value::from("dto_valid"), sonic_rs::json!(true)));
                                 response_fields.push((Value::from("dto_data"), data));
                             }
                             Err(errors) => {
@@ -860,8 +909,7 @@ pub unsafe extern "C" fn quill_json_compact(
             return 0;
         }
         let input_str =
-            std::str::from_utf8(slice::from_raw_parts(input as *const u8, input_len))
-                .unwrap_or("");
+            std::str::from_utf8(slice::from_raw_parts(input as *const u8, input_len)).unwrap_or("");
         if let Some(compacted) = json::compact_json(input_str) {
             let bytes = compacted.as_bytes();
             if out_max > 0 && !out_buf.is_null() {
@@ -930,8 +978,8 @@ pub unsafe extern "C" fn quill_shared_set(
         }
         let key_str =
             std::str::from_utf8(slice::from_raw_parts(key as *const u8, key_len)).unwrap_or("");
-        let val_str =
-            std::str::from_utf8(slice::from_raw_parts(val_json as *const u8, val_len)).unwrap_or("");
+        let val_str = std::str::from_utf8(slice::from_raw_parts(val_json as *const u8, val_len))
+            .unwrap_or("");
         if let Ok(val) = from_str::<Value>(val_str) {
             SHARED_STATE.set(key_str.to_string(), val);
             0

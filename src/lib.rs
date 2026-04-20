@@ -46,11 +46,11 @@ mod ax_rt {
         routing::any,
         Router as AxumRouter,
     };
-    use std::net::SocketAddr;
     use serde_json::json;
     use socket2::{Domain, Protocol, Socket, Type};
     use sonic_rs::{JsonContainerTrait, JsonValueTrait};
     use std::collections::HashMap;
+    use std::net::SocketAddr;
     #[cfg(unix)]
     use std::os::unix::io::FromRawFd;
     use std::sync::Arc;
@@ -100,6 +100,7 @@ mod ax_rt {
         Ok(TcpListener::from_std(std_listener)?)
     }
 
+
     pub async fn start_server(
         port: u16,
         state: Arc<ServerState>,
@@ -107,14 +108,14 @@ mod ax_rt {
         let app = AxumRouter::new()
             .fallback(any(handle_request))
             .with_state(state);
- 
+
         let listener = make_listener(port)?;
         let (close_tx, close_rx) = oneshot::channel::<()>();
         {
             let mut guard = super::DRAIN_SIGNAL.lock().unwrap();
             *guard = Some(close_tx);
         }
- 
+
         #[cfg(unix)]
         {
             tokio::spawn(async move {
@@ -123,7 +124,7 @@ mod ax_rt {
                 let _ = sigterm.recv().await;
             });
         }
- 
+
         axum::serve(
             listener,
             app.into_make_service_with_connect_info::<SocketAddr>(),
@@ -1049,7 +1050,7 @@ mod ssb_hardening_tests {
             let stats_cstr = std::ffi::CString::from_raw(stats_ptr as *mut c_char);
             let stats_str = stats_cstr.to_str().unwrap();
             let stats: Value = from_str(stats_str).unwrap();
-            
+
             // Total requests should be at least 0
             assert!(stats["requests_total"].as_u64().is_some());
         }
@@ -1057,7 +1058,7 @@ mod ssb_hardening_tests {
 
     #[test]
     fn test_drain_signal_behavior() {
-        // Since we can't easily start a real server in a unit test 
+        // Since we can't easily start a real server in a unit test
         // without binding to a port, we just verify the drain logic
         // returns 1 (error) when no server is running.
         unsafe {

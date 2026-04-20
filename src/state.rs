@@ -87,7 +87,9 @@ mod tests {
 
         for i in 0..count {
             assert_eq!(
-                state.get_ref(&format!("key_{}", i)).and_then(|v| v.as_i64()),
+                state
+                    .get_ref(&format!("key_{}", i))
+                    .and_then(|v| v.as_i64()),
                 Some(i as i64)
             );
         }

@@ -14,8 +14,8 @@ impl SharedState {
         self.kv.insert(key, value);
     }
 
-    pub fn get(&self, key: &str) -> Option<Value> {
-        self.kv.get(key).map(|v| v.clone())
+    pub fn get_ref(&self, key: &str) -> Option<dashmap::mapref::one::Ref<'_, String, Value>> {
+        self.kv.get(key)
     }
 
     pub fn remove(&self, key: &str) -> Option<Value> {
@@ -45,7 +45,7 @@ mod tests {
     fn test_basic_set_get() {
         let state = SharedState::new();
         state.set("key1".to_string(), Value::new_i64(100));
-        assert_eq!(state.get("key1").and_then(|v| v.as_i64()), Some(100));
+        assert_eq!(state.get_ref("key1").and_then(|v| v.as_i64()), Some(100));
     }
 
     #[test]
@@ -72,7 +72,7 @@ mod tests {
         }
 
         assert_eq!(
-            state.get("global_counter").and_then(|v| v.as_i64()),
+            state.get_ref("global_counter").and_then(|v| v.as_i64()),
             Some((thread_count * iterations) as i64)
         );
     }
@@ -87,7 +87,7 @@ mod tests {
 
         for i in 0..count {
             assert_eq!(
-                state.get(&format!("key_{}", i)).and_then(|v| v.as_i64()),
+                state.get_ref(&format!("key_{}", i)).and_then(|v| v.as_i64()),
                 Some(i as i64)
             );
         }

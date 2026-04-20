@@ -59,10 +59,11 @@ impl ValidatorRegistry {
         for field in schema.fields.values() {
             for rule in &field.rules {
                 if let ValidationRule::Regex { pattern } = rule {
-                    if !self.regex_cache.contains_key(pattern) {
-                        let re = Regex::new(pattern).map_err(|e| e.to_string())?;
-                        self.regex_cache.insert(pattern.clone(), re);
-                    }
+                    self.regex_cache
+                        .entry(pattern.clone())
+                        .or_insert_with(|| {
+                            Regex::new(pattern).expect("Validator pre-compiled regex failed")
+                        });
                 }
             }
         }
